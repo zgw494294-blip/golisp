@@ -48,4 +48,6 @@ func InitBuiltins() {
 	RegisterEnvironmentPrimitives()
 	RegisterIOPrimitives()
 	RegisterChannelPrimitives()
+	RegisterContinuationPrimitives()
+	resolveIntrinsicPointers()
 }

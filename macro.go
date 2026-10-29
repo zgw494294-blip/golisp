@@ -79,13 +79,21 @@ func (self *Macro) makeLocalBindings(args *Data, argEnv *SymbolTableFrame, local
 }
 
 func (self *Macro) Expand(args *Data, argEnv *SymbolTableFrame) (result *Data, err error) {
-	localEnv := NewSymbolTableFrameBelow(self.Env, self.Name)
-	err = self.makeLocalBindings(args, argEnv, localEnv, false)
+	localEnv, err := self.expandEnvironment(args, argEnv)
 	if err != nil {
 		return
 	}
 
 	return Eval(self.Body, localEnv)
+}
+
+// expandEnvironment binds the raw macro arguments in a fresh expansion
+// environment without evaluating the transformer body. It is shared by the
+// recursive evaluator and the continuation-stack machine.
+func (self *Macro) expandEnvironment(args *Data, argEnv *SymbolTableFrame) (localEnv *SymbolTableFrame, err error) {
+	localEnv = NewSymbolTableFrameBelow(self.Env, self.Name)
+	err = self.makeLocalBindings(args, argEnv, localEnv, false)
+	return
 }
 
 func (self *Macro) internalApply(args *Data, argEnv *SymbolTableFrame, eval bool) (result *Data, err error) {

@@ -98,7 +98,34 @@ func (self *Function) makeLocalBindings(args *Data, argEnv *SymbolTableFrame, lo
 }
 
 func (self *Function) internalApply(args *Data, argEnv *SymbolTableFrame, frame *FrameMap, eval bool) (result *Data, err error) {
-	localEnv := NewSymbolTableFrameBelowWithFrame(self.Env, frame, self.Name)
+	localEnv, err := self.bindForCall(args, argEnv, frame, eval)
+	if err != nil {
+		return
+	}
+
+	localGuid := atomic.AddInt64(&ProfileGUID, 1) - 1
+
+	ProfileEnter("func", self.Name, localGuid)
+
+	for s := self.Body; NotNilP(s); s = Cdr(s) {
+		result, err = Eval(Car(s), localEnv)
+		if err != nil {
+			result, err = nil, errors.New(fmt.Sprintf("In '%s': %s", self.Name, err))
+			break
+		}
+	}
+
+	ProfileExit("func", self.Name, localGuid)
+
+	return
+}
+
+// bindForCall creates and populates the local lexical environment for an
+// invocation of the function. When eval is true the arguments are unevaluated
+// expressions evaluated in argEnv, otherwise they are already plain values.
+// It is shared by the recursive evaluator and the continuation-stack machine.
+func (self *Function) bindForCall(args *Data, argEnv *SymbolTableFrame, frame *FrameMap, eval bool) (localEnv *SymbolTableFrame, err error) {
+	localEnv = NewSymbolTableFrameBelowWithFrame(self.Env, frame, self.Name)
 	localEnv.Previous = argEnv
 	selfSym := Intern("self")
 	if frame != nil {
@@ -129,20 +156,6 @@ func (self *Function) internalApply(args *Data, argEnv *SymbolTableFrame, frame 
 	if err != nil {
 		return
 	}
-
-	localGuid := atomic.AddInt64(&ProfileGUID, 1) - 1
-
-	ProfileEnter("func", self.Name, localGuid)
-
-	for s := self.Body; NotNilP(s); s = Cdr(s) {
-		result, err = Eval(Car(s), localEnv)
-		if err != nil {
-			result, err = nil, errors.New(fmt.Sprintf("In '%s': %s", self.Name, err))
-			break
-		}
-	}
-
-	ProfileExit("func", self.Name, localGuid)
 
 	return
 }

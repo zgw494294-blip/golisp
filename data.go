@@ -37,6 +37,7 @@ const (
 	FrameType
 	EnvironmentType
 	PortType
+	ContinuationType
 )
 
 type ConsCell struct {
@@ -120,6 +121,8 @@ func TypeName(t uint8) string {
 		return "Environment"
 	case PortType:
 		return "Port"
+	case ContinuationType:
+		return "Continuation"
 	default:
 		return "Unknown"
 	}
@@ -923,6 +926,8 @@ func IsEqual(d *Data, o *Data) bool {
 		return MacroValue(d) == MacroValue(o)
 	case PrimitiveType:
 		return PrimitiveValue(d) == PrimitiveValue(o)
+	case ContinuationType:
+		return ContinuationValue(d) == ContinuationValue(o)
 	case BoxedObjectType:
 		return (ObjectType(d) == ObjectType(o)) && (ObjectValue(d) == ObjectValue(o))
 	}
@@ -1055,6 +1060,8 @@ func String(d *Data) string {
 		return fmt.Sprintf("<environment: %s>", EnvironmentValue(d).Name)
 	case PortType:
 		return fmt.Sprintf("<port: %s>", PortValue(d).Name())
+	case ContinuationType:
+		return "<continuation>"
 	}
 
 	return ""
@@ -1125,79 +1132,11 @@ func logResult(result *Data, env *SymbolTableFrame) {
 	}
 }
 
-func evalHelper(d *Data, env *SymbolTableFrame, needFunction bool) (result *Data, err error) {
-	if IsInteractive && !DebugEvalInDebugRepl {
-		env.CurrentCode.PushFront(fmt.Sprintf("Eval %s", String(d)))
-	}
-
-	logEval(d, env)
-
-	if DebugSingleStep {
-		DebugSingleStep = false
-		DebugRepl(env)
-	}
-
-	if DebugCurrentFrame != nil && env == DebugCurrentFrame.Previous {
-		DebugCurrentFrame = nil
-		DebugRepl(env)
-	}
-
-	if d != nil {
-		switch d.Type {
-		case ConsCellType:
-			{
-				d = postProcessShortcuts(d)
-
-				// catch empty cons cell
-				if NilP(d) {
-					return EmptyCons(), nil
-				}
-
-				var function *Data
-				function, err = evalHelper(Car(d), env, true)
-
-				if err != nil {
-					return
-				}
-				if NilP(function) {
-					err = errors.New(fmt.Sprintf("Nil when function or macro expected for %s.", String(Car(d))))
-					return
-				}
-
-				if !DebugSingleStep && TypeOf(function) == FunctionType && DebugOnEntry.Has(FunctionValue(function).Name) {
-					DebugRepl(env)
-				}
-
-				args := Cdr(d)
-
-				result, err = Apply(function, args, env)
-				if err != nil {
-					err = fmt.Errorf("\nEvaling %s. %w", String(d), err)
-					return
-				} else if DebugReturnValue != nil {
-					result = DebugReturnValue
-					DebugReturnValue = nil
-				}
-			}
-		case SymbolType:
-			if NakedP(d) {
-				result = d
-			} else {
-				result = env.ValueOfWithFunctionSlotCheck(d, needFunction)
-			}
-		default:
-			result = d
-		}
-	}
-	logResult(result, env)
-	if IsInteractive && !DebugEvalInDebugRepl && env.CurrentCode.Len() > 0 {
-		env.CurrentCode.Remove(env.CurrentCode.Front())
-	}
-	return result, nil
-}
-
+// Eval evaluates d in env. Evaluation runs on the continuation-stack
+// machine implemented in continuation.go, which provides first-class
+// call/cc continuations while preserving the public signature and behavior.
 func Eval(d *Data, env *SymbolTableFrame) (result *Data, err error) {
-	return evalHelper(d, env, false)
+	return runVM(d, env)
 }
 
 func formatApply(function *Data, args *Data) string {
@@ -1236,6 +1175,8 @@ func Apply(function *Data, args *Data, env *SymbolTableFrame) (result *Data, err
 		result, err = MacroValue(function).Apply(args, env)
 	case PrimitiveType:
 		result, err = PrimitiveValue(function).Apply(args, env)
+	case ContinuationType:
+		err = errors.New("A saved continuation can only be invoked through Eval inside the synchronous evaluator.")
 	default:
 		err = errors.New(fmt.Sprintf("%s when function or macro expected for %s.", TypeName(TypeOf(function)), String(function)))
 		return
@@ -1261,6 +1202,8 @@ func ApplyWithoutEval(function *Data, args *Data, env *SymbolTableFrame) (result
 		result, err = MacroValue(function).ApplyWithoutEval(args, env)
 	case PrimitiveType:
 		result, err = PrimitiveValue(function).ApplyWithoutEval(args, env)
+	case ContinuationType:
+		err = errors.New("A saved continuation can only be invoked through Eval inside the synchronous evaluator.")
 	default:
 		err = errors.New(fmt.Sprintf("%s when function or macro expected for %s.", TypeName(TypeOf(function)), String(function)))
 		return
